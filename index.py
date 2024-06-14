@@ -1,86 +1,93 @@
 from tkinter import *
 from tkinter import ttk
 from tkinter import messagebox
-import pymongo
-import pymongo.errors
-from bson.objectid import ObjectId
+import pyodbc
 
-# Configuracion de la conexion a MongoDB
-MONGO_HOST = "localhost"
-MONGO_PORT = "27017"
-MONGO_TIME_OFF = 1000
+# Configuración de la conexión
+SQL_SERVER = "nombre de servidor"
+SQL_DATABASE = "nombre de la base de datos "
+SQL_USERNAME = "usuario"
+SQL_PASSWORD = "contraseña"
 
-MONGO_URI = f"mongodb://{MONGO_HOST}:{MONGO_PORT}/"
-MONGO_BASE_DATOS = "escuela"
-MONGO_COLLECTION = "alumnos"
-
-# CONEXION A BD ESCUELA
-cliente = pymongo.MongoClient(MONGO_URI, serverSelectionTimeoutMS=MONGO_TIME_OFF)
-baseDatos = cliente[MONGO_BASE_DATOS]
-coleccion = baseDatos[MONGO_COLLECTION]
+# Establecer la conexión
+conn = pyodbc.connect(
+    f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={SQL_SERVER};DATABASE={SQL_DATABASE};UID={SQL_USERNAME};PWD={SQL_PASSWORD}"
+)
+cursor = conn.cursor()
 ID_ALUMNO = " "
 
-# funcion para mostrar datos en la tabla
+# función para mostrar datos en la tabla
 def mostrarDatos(nombre="", sexo="", calificacion=""):
-    objetoBuscar = {}
+    query = "SELECT id, nombre FROM alumnos WHERE 1=1"
+    params = []
+    
     if nombre:
-        objetoBuscar["nombre"] = nombre
+        query += " AND nombre LIKE ?"
+        params.append(f"%{nombre}%")
     if sexo:
-        objetoBuscar["sexo"] = sexo
+        query += " AND sexo LIKE ?"
+        params.append(sexo)
     if calificacion:
-        objetoBuscar["calificacion"] = calificacion
+        query += " AND calificacion LIKE ?"
+        params.append(calificacion)
     
     try:
         registros = table.get_children()
         for registro in registros:
             table.delete(registro)
-        for documento in coleccion.find(objetoBuscar):
-            table.insert('', 'end', text=str(documento["_id"]),values=documento["nombre"])
-    except pymongo.errors.ServerSelectionTimeoutError as errorTiempo:
-        messagebox.showerror(message="Tiempo excedido: " + str(errorTiempo))
-    except pymongo.errors.ConnectionFailure as errorConexion:
-        messagebox.showerror(message="Fallo al conectarse a MongoDB: " + str(errorConexion))
 
-# funcion para crear un registro
+        cursor.execute(query, params)
+        for row in cursor.fetchall():
+            table.insert('', 'end', text=str(row[0]), values=row[1])
+    except pyodbc.Error as e:
+        messagebox.showerror(message="Error al conectarse a SQL Server: " + str(e))
+
+# función para crear un registro
 def crearRegistro():
     if nombre.get() and sexo.get() and calificacion.get():
         try:
-            documento = {"nombre": nombre.get(), "sexo": sexo.get(), "calificacion": calificacion.get()}
-            coleccion.insert_one(documento)
+            query = "INSERT INTO alumnos (nombre, sexo, calificacion) VALUES (?, ?, ?)"
+            params = (nombre.get(), sexo.get(), calificacion.get())
+            cursor.execute(query, params)
+            conn.commit()
             nombre.delete(0, END)
             sexo.delete(0, END)
             calificacion.delete(0, END)
             mostrarDatos()
-        except pymongo.errors.ConnectionFailure as error:
-            messagebox.showerror(message="Fallo al conectarse a MongoDB: " + str(error))
+        except pyodbc.Error as e:
+            messagebox.showerror(message="Error al conectarse a SQL Server: " + str(e))
     else:
-        messagebox.showerror(message="Los campos no estan completos")
+        messagebox.showerror(message="Los campos no están completos")
 
-# funcion para seleccionar un registro
+# función para seleccionar un registro
 def dobleClickTabla(event):
     global ID_ALUMNO
     ID_ALUMNO = str(table.item(table.selection())["text"])
-    documento = coleccion.find_one({"_id": ObjectId(ID_ALUMNO)})
-    nombre.delete(0, END)
-    nombre.insert(0, documento["nombre"])
-    sexo.delete(0, END)
-    sexo.insert(0, documento["sexo"])
-    calificacion.delete(0, END)
-    calificacion.insert(0, documento["calificacion"])
-    crear["state"] = "disabled"
-    editar["state"] = "normal"
-    borrar["state"] = "normal"
+    query = "SELECT nombre, sexo, calificacion FROM alumnos WHERE id = ?"
+    
+    cursor.execute(query, (ID_ALUMNO,))
+    row = cursor.fetchone()
+    
+    if row: 
+        nombre.delete(0, END)
+        nombre.insert(0, row[0])
+        sexo.delete(0, END)
+        sexo.insert(0, row[1])
+        calificacion.delete(0, END)
+        calificacion.insert(0, row[2])
+        crear["state"] = "disabled"
+        editar["state"] = "normal"
+        borrar["state"] = "normal"
 
 # funcion para actualizar un registro
 def editarRegistro():
     global ID_ALUMNO
     if nombre.get() and sexo.get() and calificacion.get():
         try:
-            coleccion.update_one({"_id": ObjectId(ID_ALUMNO)}, {"$set":{
-                "nombre": nombre.get(),
-                "sexo": sexo.get(),
-                "calificacion": calificacion.get(),
-            }})
+            query = "UPDATE alumnos SET nombre = ?, sexo = ?, calificacion = ? WHERE id = ? "
+            params = (nombre.get(), sexo.get(), calificacion.get(), ID_ALUMNO)
+            cursor.execute(query, params)
+            conn.commit()
             nombre.delete(0, END)
             sexo.delete(0, END)
             calificacion.delete(0, END)
@@ -89,16 +96,18 @@ def editarRegistro():
             editar["state"] = "disabled"
             borrar["state"] = "disabled"
             ID_ALUMNO = " "
-        except pymongo.errors.ConnectionFailure as error:
-            messagebox.showerror(message="Fallo al conectarse a MongoDB: " + str(error))
+        except pyodbc.Error as e:
+            messagebox.showerror(message="Error al conectarse a SQL Server: " + str(e))
     else:
-        messagebox.showerror(message="Los campos no estan completos")
+        messagebox.showerror(message="Los campos no están completos")
 
-# funcion para eliminar un registro
+# función para eliminar un registro
 def borrarRegistro():
     global ID_ALUMNO
     try: 
-        coleccion.delete_one({"_id": ObjectId(ID_ALUMNO)})
+        query = "DELETE FROM alumnos WHERE id = ?"
+        cursor.execute(query, (ID_ALUMNO),)
+        conn.commit()
         nombre.delete(0, END)
         sexo.delete(0, END)
         calificacion.delete(0, END)
@@ -107,18 +116,18 @@ def borrarRegistro():
         editar["state"] = "disabled"
         borrar["state"] = "disabled"
         ID_ALUMNO = ""
-    except pymongo.errors.ConnectionFailure as error:
-        messagebox.showerror(message="Fallo al conectarse a MongoDB: " + str(error))
+    except pyodbc.Error as e:
+            messagebox.showerror(message="Error al conectarse a SQL Server: " + str(e))
 
-# funcion para buscar un registro
+# función para buscar un registro
 def buscarRegistro():
     mostrarDatos(buscarnombre.get(), buscarsexo.get(), buscarcalificacion.get())
 
-# Configuracion de la ventana principal
+# Configuración de la ventana principal
 ventana=Tk()
 ventana.title("Gestión de Alumnos")
 
-# Configuracion de la tabla
+# Configuración de la tabla
 table=ttk.Treeview(ventana, columns=("nombre"))
 table.grid(row=1, column=0, columnspan=2)
 table.heading("#0",text="ID")
@@ -135,7 +144,7 @@ Label(ventana,text="Sexo").grid(row=3, column=0)
 sexo = Entry(ventana)
 sexo.grid(row=3, column=1, sticky=W+E)
 
-Label(ventana,text="Calificacion").grid(row=4, column=0)
+Label(ventana,text="Calificación").grid(row=4, column=0)
 calificacion = Entry(ventana)
 calificacion.grid(row=4, column=1, sticky=W+E)
 
@@ -148,7 +157,7 @@ Label(ventana,text="Buscar por sexo").grid(row=9, column=0)
 buscarsexo = Entry(ventana)
 buscarsexo.grid(row=9, column=1, sticky=W+E)
 
-Label(ventana,text="Buscar por Calificacion").grid(row=10, column=0)
+Label(ventana,text="Buscar por Calificación").grid(row=10, column=0)
 buscarcalificacion = Entry(ventana)
 buscarcalificacion.grid(row=10, column=1, sticky=W+E)
 
